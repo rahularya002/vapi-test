@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Voice Call Agent (Vapi) – Minimal Setup
 
-## Getting Started
+This repo exposes two serverless endpoints to power a simple voice agent using Vapi. There is no UI. The agent starts every call by asking the caller for their language preference (English or Hindi) and then continues in that language.
 
-First, run the development server:
+### Endpoints
+
+- `GET /api/assistant` — returns a minimal Vapi assistant configuration that opens by asking for English/Hindi.
+- `POST /api/vapi-webhook` — receives and logs Vapi call events. You can set this URL in the Vapi dashboard as your webhook.
+
+### Run locally
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Server runs at http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+With the dev server running:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Test assistant config: `http://localhost:3000/api/assistant`
+- Webhook healthcheck: `http://localhost:3000/api/vapi-webhook`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Configure in Vapi Dashboard
 
-## Learn More
+1. Create an assistant and attach a phone number (or test in-browser from Vapi).
+2. Set your webhook URL to your deployed `POST /api/vapi-webhook` endpoint.
+3. Optionally copy pieces from `GET /api/assistant` into your Vapi assistant config (model, voice, transcription, and the initial greeting that asks for English/Hindi).
 
-To learn more about Next.js, take a look at the following resources:
+### Notes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- The example `model`, `voice`, and `transcription` providers in `app/api/assistant/route.ts` are placeholders. Choose providers/models you have enabled in Vapi.
+- If you deploy to Vercel, remember to update the webhook URL in the Vapi dashboard to your production domain.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Environment variables
 
-## Deploy on Vercel
+Create a `.env.local` file in the project root with the following keys (values are examples and can be changed):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+# Assistant configuration
+ASSISTANT_NAME="Language Preference Agent"
+MODEL_PROVIDER="openai"
+MODEL_NAME="gpt-4o-mini"
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Voice provider
+VOICE_PROVIDER="elevenlabs"
+VOICE_ID="adam"
+
+# Transcription
+TRANSCRIPTION_PROVIDER="deepgram"
+TRANSCRIPTION_MODEL="nova-2"
+TRANSCRIPTION_LANGUAGE="multi"
+
+# Prompting
+INITIAL_MESSAGE="Hello! I can speak English or Hindi. Which language would you prefer?"
+INSTRUCTIONS="You are a friendly assistant that can converse in English and Hindi. After the caller states a preference, continue the conversation in that language. If unclear, briefly ask again."
+
+# Webhook auth (optional). If set, webhook requires Authorization: Bearer <token>
+WEBHOOK_SECRET="change-me"
+```
+
+### Files
+
+- `app/api/assistant/route.ts`: returns the minimalist assistant config.
+- `app/api/vapi-webhook/route.ts`: receives and logs webhook events.
+
