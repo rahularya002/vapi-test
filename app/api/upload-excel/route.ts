@@ -1,0 +1,76 @@
+import { NextRequest, NextResponse } from "next/server";
+import { writeFile, mkdir } from "fs/promises";
+import { join } from "path";
+import * as XLSX from "xlsx";
+
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file") as File;
+    
+    if (!file) {
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    }
+
+    // Create uploads directory if it doesn't exist
+    const uploadsDir = join(process.cwd(), "uploads");
+    try {
+      await mkdir(uploadsDir, { recursive: true });
+    } catch (error) {
+      // Directory might already exist
+    }
+
+    // Save file
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    const filePath = join(uploadsDir, file.name);
+    await writeFile(filePath, buffer);
+
+    // Parse Excel file
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    // Validate and format data
+    const candidates = jsonData.map((row: any, index: number) => {
+      const phone = row.phone || row.Phone || row.PHONE || row.phoneNumber || row.PhoneNumber;
+      const name = row.name || row.Name || row.NAME || row.candidateName || row.CandidateName || `Candidate ${index + 1}`;
+      const email = row.email || row.Email || row.EMAIL || row.emailAddress || row.EmailAddress || "";
+      const position = row.position || row.Position || row.POSITION || row.jobTitle || row.JobTitle || "";
+      
+      if (!phone) {
+        throw new Error(`Row ${index + 2}: Phone number is required`);
+      }
+
+      // Clean phone number (remove spaces, dashes, etc.)
+      const cleanPhone = phone.toString().replace(/[\s\-\(\)]/g, "");
+      
+      return {
+        id: index + 1,
+        name: name.toString(),
+        phone: cleanPhone,
+        email: email.toString(),
+        position: position.toString(),
+        status: "pending", // pending, calling, completed, failed
+        callResult: null,
+        callNotes: "",
+        callTime: null
+      };
+    });
+
+    return NextResponse.json({
+      success: true,
+      candidates,
+      totalCount: candidates.length,
+      message: `Successfully parsed ${candidates.length} candidates from Excel file`
+    });
+
+  } catch (error) {
+    console.error("Error processing Excel file:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to process Excel file" },
+      { status: 500 }
+    );
+  }
+}
