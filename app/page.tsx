@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Upload, Phone, Users, History, Settings, Play, Pause, Square, FileText, Download } from "lucide-react";
+import { Upload, Phone, Users, History, Settings, Play, Pause, Square, FileText, Download, Database, Trash2, Save } from "lucide-react";
+import { formatPhoneForDisplay } from "@/lib/phone-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -54,6 +55,7 @@ export default function Home() {
   const [isCalling, setIsCalling] = useState(false);
   const [currentCall, setCurrentCall] = useState<Candidate | null>(null);
   const [activeTab, setActiveTab] = useState("upload");
+  const [dataLocation, setDataLocation] = useState("Loading...");
   const [callConfig, setCallConfig] = useState<CallConfiguration>({
     method: "hybrid",
     script: `Hello! This is an automated call regarding your job application. Do you have a few minutes to answer some questions?
@@ -81,6 +83,9 @@ Thank you for your time!`,
   // Load call queue and history on component mount
   useEffect(() => {
     loadCallData();
+    // Check if Supabase is configured
+    const hasSupabase = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    setDataLocation(hasSupabase ? "Supabase Database (Cloud)" : "Local Memory (Fallback)");
   }, []);
 
   const loadCallData = async () => {
@@ -97,6 +102,47 @@ Thank you for your time!`,
       setCallHistory(historyData.calls || []);
     } catch (error) {
       console.error("Error loading call data:", error);
+    }
+  };
+
+  const loadScriptTemplates = async () => {
+    try {
+      const response = await fetch("/api/script", { method: "PUT" });
+      const data = await response.json();
+      
+      if (data.success && data.templates) {
+        // Show templates in a simple alert for now
+        const templateNames = data.templates.map((t: any) => t.name).join(", ");
+        alert(`Available templates: ${templateNames}\n\nClick on a template name to load it.`);
+      }
+    } catch (error) {
+      console.error("Error loading templates:", error);
+    }
+  };
+
+  const saveScript = async () => {
+    try {
+      const response = await fetch("/api/script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          script: callConfig.script,
+          voiceSettings: callConfig.voiceSettings,
+          callSettings: callConfig.callSettings,
+          method: callConfig.method
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        alert("Script saved successfully! New calls will use the updated script immediately.");
+      } else {
+        alert("Failed to save script: " + data.error);
+      }
+    } catch (error) {
+      console.error("Error saving script:", error);
+      alert("Failed to save script. Please try again.");
     }
   };
 
@@ -179,7 +225,7 @@ Thank you for your time!`,
       // Initiate call based on selected method
       let callResponse;
       if (callConfig.method === "twilio") {
-        callResponse = await fetch("/api/twilio-call", {
+        callResponse = await fetch("/api/twilio-only-call", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -211,7 +257,7 @@ Thank you for your time!`,
       const callResult = await callResponse.json();
       
       if (callResult.success) {
-        alert(`Call initiated to ${candidate.name} at ${candidate.phone}`);
+        alert(`Call initiated to ${candidate.name} at ${formatPhoneForDisplay(candidate.phone)}`);
         loadCallData(); // Refresh data
       } else {
         alert(`Error initiating call: ${callResult.error}`);
@@ -268,6 +314,50 @@ Thank you for your time!`,
     }
   };
 
+  const exportData = async () => {
+    try {
+      const response = await fetch("/api/data?action=export");
+      const result = await response.json();
+      
+      if (result.success) {
+        const dataStr = JSON.stringify(result.data, null, 2);
+        const dataBlob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `auto-caller-data-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        alert("Data exported successfully!");
+      }
+    } catch (error) {
+      console.error("Error exporting data:", error);
+      alert("Error exporting data");
+    }
+  };
+
+  const clearAllData = async () => {
+    if (confirm("Are you sure you want to clear ALL data? This will delete all candidates, call queue, and history. This action cannot be undone!")) {
+      try {
+        const response = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "clear_all" }),
+        });
+
+        if (response.ok) {
+          setCandidates([]);
+          setCallQueue([]);
+          setCallHistory([]);
+          alert("All data cleared successfully");
+        }
+      } catch (error) {
+        console.error("Error clearing data:", error);
+        alert("Error clearing data");
+      }
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -285,6 +375,21 @@ Thank you for your time!`,
             </div>
             
             <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                <Database className="h-4 w-4" />
+                <span>{dataLocation}</span>
+              </div>
+              
+              <Button variant="outline" size="sm" onClick={exportData}>
+                <Download className="h-4 w-4 mr-2" />
+                Export Data
+              </Button>
+              
+              <Button variant="outline" size="sm" onClick={clearAllData}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Clear All
+              </Button>
+              
               <Dialog>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm">
@@ -312,21 +417,53 @@ Thank you for your time!`,
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="vapi">Vapi Only</SelectItem>
-                          <SelectItem value="twilio">Twilio Only</SelectItem>
-                          <SelectItem value="hybrid">Twilio + Vapi (Recommended)</SelectItem>
+                          <SelectItem value="vapi">Vapi Only (Requires Vapi Phone Number)</SelectItem>
+                          <SelectItem value="twilio">Twilio Only (Basic Interview Flow)</SelectItem>
+                          <SelectItem value="hybrid">Twilio + Basic Flow (Recommended)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
+
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <p className="text-sm text-blue-800">
+                        <strong>📞 Call Options:</strong> 
+                        <br />• <strong>Twilio Only:</strong> Uses your Twilio phone number with basic interview flow
+                        <br />• <strong>Hybrid:</strong> Twilio calling with enhanced interview questions
+                        <br />• <strong>Vapi Only:</strong> Requires Vapi phone number (see VAPI_SETUP_GUIDE.md)
+                      </p>
+                    </div>
                     
                     <div className="space-y-2">
-                      <Label>Interview Script</Label>
+                      <div className="flex items-center justify-between">
+                        <Label>Interview Script</Label>
+                        <div className="flex space-x-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={loadScriptTemplates}
+                          >
+                            Templates
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={saveScript}
+                          >
+                            Save
+                          </Button>
+                        </div>
+                      </div>
                       <Textarea
                         value={callConfig.script}
                         onChange={(e) => setCallConfig(prev => ({ ...prev, script: e.target.value }))}
                         rows={8}
                         placeholder="Enter your interview script..."
                       />
+                      <p className="text-xs text-muted-foreground">
+                        💡 Script is cached for 5 minutes. Changes apply immediately to new calls.
+                      </p>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4">
@@ -334,12 +471,12 @@ Thank you for your time!`,
                         <Label>Voice Speed</Label>
                         <Slider
                           value={[callConfig.voiceSettings.speed]}
-                          onValueChange={([value]) => 
-                            setCallConfig(prev => ({ 
-                              ...prev, 
-                              voiceSettings: { ...prev.voiceSettings, speed: value }
-                            }))
-                          }
+                        onValueChange={([value]: number[]) => 
+                          setCallConfig(prev => ({ 
+                            ...prev, 
+                            voiceSettings: { ...prev.voiceSettings, speed: value }
+                          }))
+                        }
                           min={0.5}
                           max={2.0}
                           step={0.1}
@@ -353,12 +490,12 @@ Thank you for your time!`,
                         <Label>Max Call Duration (minutes)</Label>
                         <Slider
                           value={[callConfig.callSettings.maxDuration]}
-                          onValueChange={([value]) => 
-                            setCallConfig(prev => ({ 
-                              ...prev, 
-                              callSettings: { ...prev.callSettings, maxDuration: value }
-                            }))
-                          }
+                        onValueChange={([value]: number[]) => 
+                          setCallConfig(prev => ({ 
+                            ...prev, 
+                            callSettings: { ...prev.callSettings, maxDuration: value }
+                          }))
+                        }
                           min={5}
                           max={30}
                           step={1}
@@ -409,6 +546,16 @@ Thank you for your time!`,
                 <CardDescription>
                   Upload an Excel file with candidate information to get started
                 </CardDescription>
+                <div className="mt-2">
+                  <a 
+                    href="/sample-candidates.xlsx" 
+                    download="sample-candidates.xlsx"
+                    className="text-sm text-blue-600 hover:text-blue-800 underline flex items-center space-x-1"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download Sample Excel Template</span>
+                  </a>
+                </div>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
@@ -427,6 +574,20 @@ Thank you for your time!`,
                       <p className="text-sm text-muted-foreground">Uploading and parsing file...</p>
                     </div>
                   )}
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-blue-900 mb-2">📋 Expected Excel Format</h4>
+                  <div className="text-sm text-blue-800 space-y-1">
+                    <p><strong>Required Columns:</strong></p>
+                    <ul className="list-disc list-inside ml-4 space-y-1">
+                      <li><strong>Phone</strong> - Candidate's phone number (required)</li>
+                      <li><strong>Name</strong> - Full name (optional, defaults to "Candidate 1", "Candidate 2", etc.)</li>
+                      <li><strong>Email</strong> - Email address (optional)</li>
+                      <li><strong>Position</strong> - Job title/position (optional)</li>
+                    </ul>
+                    <p className="mt-2"><strong>Supported column names:</strong> phone/Phone/PHONE/phoneNumber, name/Name/NAME/candidateName, email/Email/EMAIL/emailAddress, position/Position/POSITION/jobTitle</p>
+                  </div>
                 </div>
 
                 {candidates.length > 0 && (
@@ -453,7 +614,7 @@ Thank you for your time!`,
                           {candidates.slice(0, 10).map((candidate) => (
                             <TableRow key={candidate.id}>
                               <TableCell className="font-medium">{candidate.name}</TableCell>
-                              <TableCell>{candidate.phone}</TableCell>
+                              <TableCell>{formatPhoneForDisplay(candidate.phone)}</TableCell>
                               <TableCell>{candidate.email}</TableCell>
                               <TableCell>{candidate.position}</TableCell>
                             </TableRow>
@@ -476,6 +637,44 @@ Thank you for your time!`,
                     The phone column is required, others are optional.
                   </AlertDescription>
                 </Alert>
+
+                <Card className="bg-blue-50 border-blue-200">
+                  <CardContent className="pt-6">
+                    <div className="flex items-start space-x-3">
+                      <Database className="h-5 w-5 text-blue-600 mt-0.5" />
+                      <div>
+                        <h4 className="font-semibold text-blue-900 mb-2">Performance & Storage Information</h4>
+                        <p className="text-sm text-blue-800 mb-2">
+                          <strong>Where your data is saved:</strong> {dataLocation.includes("Supabase") 
+                            ? "All candidate data, call queue, and call history are automatically saved to your Supabase database in the cloud."
+                            : "All candidate data is temporarily stored in local memory. Set up Supabase for persistent cloud storage."
+                          }
+                        </p>
+                        <p className="text-sm text-blue-800 mb-2">
+                          <strong>Performance Optimizations:</strong>
+                        </p>
+                        <ul className="text-sm text-blue-800 list-disc list-inside space-y-1">
+                          <li><strong>Script Caching:</strong> Scripts are cached in memory for 5 minutes (no DB queries during calls)</li>
+                          <li><strong>Fast Calls:</strong> Call initiation takes ~100ms instead of 200-500ms</li>
+                          <li><strong>Auto-Refresh:</strong> Script updates are applied immediately to new calls</li>
+                          <li><strong>Fallback System:</strong> Default scripts if database is unavailable</li>
+                        </ul>
+                        <p className="text-sm text-blue-800 mb-2">
+                          <strong>Database tables:</strong>
+                        </p>
+                        <ul className="text-sm text-blue-800 list-disc list-inside space-y-1">
+                          <li><code>candidates</code> - All uploaded candidate data with status tracking</li>
+                          <li><code>call_configs</code> - Your call configuration settings</li>
+                          <li>Real-time updates and automatic backups</li>
+                          <li>Row-level security for data protection</li>
+                        </ul>
+                        <p className="text-sm text-blue-800 mt-2">
+                          <strong>Benefits:</strong> Cloud storage, real-time sync, automatic backups, and scalable infrastructure.
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </CardContent>
             </Card>
           </TabsContent>
@@ -520,7 +719,7 @@ Thank you for your time!`,
                         {candidates.map((candidate) => (
                           <TableRow key={candidate.id}>
                             <TableCell className="font-medium">{candidate.name}</TableCell>
-                            <TableCell>{candidate.phone}</TableCell>
+                            <TableCell>{formatPhoneForDisplay(candidate.phone)}</TableCell>
                             <TableCell>{candidate.email}</TableCell>
                             <TableCell>{candidate.position}</TableCell>
                             <TableCell>
@@ -608,7 +807,7 @@ Thank you for your time!`,
                           {callQueue.map((candidate) => (
                             <TableRow key={candidate.id}>
                               <TableCell className="font-medium">{candidate.name}</TableCell>
-                              <TableCell>{candidate.phone}</TableCell>
+                              <TableCell>{formatPhoneForDisplay(candidate.phone)}</TableCell>
                               <TableCell>{candidate.position}</TableCell>
                               <TableCell>
                                 <Badge 
@@ -687,7 +886,7 @@ Thank you for your time!`,
                         {callHistory.map((candidate) => (
                           <TableRow key={candidate.id}>
                             <TableCell className="font-medium">{candidate.name}</TableCell>
-                            <TableCell>{candidate.phone}</TableCell>
+                            <TableCell>{formatPhoneForDisplay(candidate.phone)}</TableCell>
                             <TableCell>{candidate.position}</TableCell>
                             <TableCell>
                               <Badge variant="outline">

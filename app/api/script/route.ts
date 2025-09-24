@@ -1,119 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ScriptCache } from "@/lib/script-cache";
+import { configApi } from "@/lib/supabase";
 
-// In-memory storage for scripts (in production, use a database)
-let scripts: any[] = [
-  {
-    id: 1,
-    name: "Basic Interview Script",
-    content: `Hello! This is an automated call regarding your job application. Do you have a few minutes to answer some questions?
-
-1. Can you tell me about yourself and your background?
-2. What interests you about this position?
-3. What are your key strengths and skills?
-4. Do you have any questions about the role or company?
-5. What is your availability for the next steps?
-
-Thank you for your time!`,
-    isDefault: true,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 2,
-    name: "Sales Follow-up Script",
-    content: `Hi! This is a follow-up call regarding our recent conversation about our services. Do you have a moment to discuss?
-
-1. How are you doing with your current solution?
-2. What challenges are you facing?
-3. Would you be interested in a demo of our new features?
-4. What would be the best time to schedule a meeting?
-
-Thank you for your time!`,
-    isDefault: false,
-    createdAt: new Date().toISOString()
-  }
-];
-
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
-
-  if (id) {
-    const script = scripts.find(s => s.id === parseInt(id));
-    if (!script) {
-      return NextResponse.json({ error: "Script not found" }, { status: 404 });
-    }
-    return NextResponse.json({ script });
-  }
-
-  return NextResponse.json({ scripts });
-}
-
-export async function POST(request: NextRequest) {
+export async function GET() {
   try {
-    const body = await request.json();
-    const { name, content, isDefault = false } = body;
-
-    if (!name || !content) {
-      return NextResponse.json(
-        { error: "Name and content are required" },
-        { status: 400 }
-      );
-    }
-
-    const newScript = {
-      id: scripts.length + 1,
-      name,
-      content,
-      isDefault,
-      createdAt: new Date().toISOString()
-    };
-
-    scripts.push(newScript);
-
+    const config = await ScriptCache.getConfig();
     return NextResponse.json({
       success: true,
-      script: newScript,
-      message: "Script created successfully"
+      script: config.script,
+      voiceSettings: config.voice_settings,
+      callSettings: config.call_settings,
+      method: config.method
     });
-
   } catch (error) {
-    console.error("Error creating script:", error);
+    console.error("Error getting script:", error);
     return NextResponse.json(
-      { error: "Failed to create script" },
+      { error: "Failed to get script" },
       { status: 500 }
     );
   }
 }
 
-export async function PUT(request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, name, content, isDefault } = body;
+    const { script, voiceSettings, callSettings, method } = body;
 
-    if (!id) {
+    if (!script) {
       return NextResponse.json(
-        { error: "Script ID is required" },
+        { error: "Script is required" },
         { status: 400 }
       );
     }
 
-    const scriptIndex = scripts.findIndex(s => s.id === parseInt(id));
-    if (scriptIndex === -1) {
-      return NextResponse.json({ error: "Script not found" }, { status: 404 });
-    }
-
-    scripts[scriptIndex] = {
-      ...scripts[scriptIndex],
-      name: name || scripts[scriptIndex].name,
-      content: content || scripts[scriptIndex].content,
-      isDefault: isDefault !== undefined ? isDefault : scripts[scriptIndex].isDefault,
-      updatedAt: new Date().toISOString()
+    // Update configuration in database
+    const updatedConfig = {
+      method: method || 'hybrid',
+      script,
+      voice_settings: voiceSettings || {
+        provider: 'elevenlabs',
+        voice_id: 'adam',
+        speed: 1.0,
+        pitch: 1.0
+      },
+      call_settings: callSettings || {
+        max_duration: 15,
+        retry_attempts: 2,
+        delay_between_calls: 30
+      }
     };
+
+    await configApi.save(updatedConfig);
+    
+    // Refresh cache immediately so new calls use updated script
+    await ScriptCache.refreshConfig();
 
     return NextResponse.json({
       success: true,
-      script: scripts[scriptIndex],
-      message: "Script updated successfully"
+      message: "Script updated successfully. New calls will use the updated script immediately.",
+      config: updatedConfig
     });
 
   } catch (error) {
@@ -125,43 +70,61 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id");
+// Get available script templates
+export async function PUT() {
+  const templates = [
+    {
+      name: "Basic Interview",
+      script: `Hello! This is an automated call regarding your job application. Do you have a few minutes to answer some questions?
 
-    if (!id) {
-      return NextResponse.json(
-        { error: "Script ID is required" },
-        { status: 400 }
-      );
+1. Can you tell me about yourself and your background?
+2. What interests you about this position?
+3. What are your key strengths and skills?
+4. Do you have any questions about the role or company?
+5. What is your availability for the next steps?
+
+Thank you for your time!`
+    },
+    {
+      name: "Technical Interview",
+      script: `Hello! This is a technical screening call for the position you applied for. Do you have 15-20 minutes for some technical questions?
+
+1. Can you walk me through your technical background?
+2. What programming languages are you most comfortable with?
+3. Describe a challenging technical problem you solved recently.
+4. How do you stay updated with new technologies?
+5. Do you have any questions about our tech stack?
+
+Thank you for your time!`
+    },
+    {
+      name: "Sales Interview",
+      script: `Hello! This is a call regarding your application for our sales position. Do you have a few minutes to discuss your experience?
+
+1. Tell me about your sales experience and achievements.
+2. How do you approach cold calling and lead generation?
+3. Describe a time you overcame a difficult objection.
+4. What's your approach to building long-term client relationships?
+5. What questions do you have about our sales process?
+
+Thank you for your time!`
+    },
+    {
+      name: "Customer Service",
+      script: `Hello! This is a call about your application for our customer service role. Do you have a few minutes to answer some questions?
+
+1. Tell me about your customer service experience.
+2. How do you handle difficult or angry customers?
+3. Describe a time you went above and beyond for a customer.
+4. What do you think makes great customer service?
+5. Do you have any questions about our service standards?
+
+Thank you for your time!`
     }
+  ];
 
-    const scriptIndex = scripts.findIndex(s => s.id === parseInt(id));
-    if (scriptIndex === -1) {
-      return NextResponse.json({ error: "Script not found" }, { status: 404 });
-    }
-
-    const script = scripts[scriptIndex];
-    if (script.isDefault) {
-      return NextResponse.json(
-        { error: "Cannot delete default script" },
-        { status: 400 }
-      );
-    }
-
-    scripts.splice(scriptIndex, 1);
-
-    return NextResponse.json({
-      success: true,
-      message: "Script deleted successfully"
-    });
-
-  } catch (error) {
-    console.error("Error deleting script:", error);
-    return NextResponse.json(
-      { error: "Failed to delete script" },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json({
+    success: true,
+    templates
+  });
 }

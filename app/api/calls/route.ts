@@ -1,21 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// In-memory storage (in production, use a database)
-let callQueue: any[] = [];
-let callHistory: any[] = [];
+import { 
+  callQueueApi,
+  callHistoryApi
+} from "@/lib/supabase";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type") || "queue";
 
-  if (type === "history") {
-    return NextResponse.json({ calls: callHistory });
-  }
+  try {
+    if (type === "history") {
+      const calls = await callHistoryApi.getHistory();
+      return NextResponse.json({ calls });
+    }
 
-  return NextResponse.json({ 
-    queue: callQueue,
-    total: callQueue.length 
-  });
+    const queue = await callQueueApi.getQueue();
+    return NextResponse.json({ 
+      queue,
+      total: queue.length 
+    });
+  } catch (error) {
+    console.error("Error fetching data:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch data" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -30,55 +40,45 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: "Candidates must be an array" }, { status: 400 });
         }
         
-        // Add candidates to queue
-        candidates.forEach((candidate: any) => {
-          const existingIndex = callQueue.findIndex(c => c.id === candidate.id);
-          if (existingIndex === -1) {
-            callQueue.push({
-              ...candidate,
-              status: "pending",
-              addedAt: new Date().toISOString()
-            });
-          }
-        });
+        // Add candidates to queue with Supabase
+        await callQueueApi.addToQueue(candidates);
+        const updatedQueue = await callQueueApi.getQueue();
         
         return NextResponse.json({ 
           success: true, 
           message: `Added ${candidates.length} candidates to call queue`,
-          queueLength: callQueue.length
+          queueLength: updatedQueue.length
         });
 
       case "start_call":
-        const candidate = callQueue.find(c => c.id === candidateId);
+        const queue = await callQueueApi.getQueue();
+        const candidate = queue.find(c => c.id === candidateId);
         if (!candidate) {
           return NextResponse.json({ error: "Candidate not found in queue" }, { status: 404 });
         }
 
-        // Update candidate status
-        candidate.status = "calling";
-        candidate.callStartTime = new Date().toISOString();
+        // Update candidate status in Supabase
+        await callQueueApi.updateStatus(candidateId, "calling");
+        const updatedCandidate = { ...candidate, status: "calling" };
 
         return NextResponse.json({ 
           success: true, 
-          candidate,
+          candidate: updatedCandidate,
           message: "Call started"
         });
 
       case "end_call":
-        const candidateToUpdate = callQueue.find(c => c.id === candidateId);
+        const currentQueue = await callQueueApi.getQueue();
+        const candidateToUpdate = currentQueue.find(c => c.id === candidateId);
         if (!candidateToUpdate) {
           return NextResponse.json({ error: "Candidate not found" }, { status: 404 });
         }
 
-        // Update candidate with call result
-        candidateToUpdate.status = "completed";
-        candidateToUpdate.callResult = callResult;
-        candidateToUpdate.callNotes = callNotes;
-        candidateToUpdate.callEndTime = new Date().toISOString();
-
-        // Move to history and remove from queue
-        callHistory.push({ ...candidateToUpdate });
-        callQueue = callQueue.filter(c => c.id !== candidateId);
+        // Update candidate with call result and move to history
+        await callQueueApi.updateStatus(candidateId, "completed", {
+          call_result: callResult,
+          call_notes: callNotes
+        });
 
         return NextResponse.json({ 
           success: true, 
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
         });
 
       case "clear_queue":
-        callQueue = [];
+        await callQueueApi.clearQueue();
         return NextResponse.json({ 
           success: true, 
           message: "Call queue cleared"

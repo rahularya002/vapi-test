@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import * as XLSX from "xlsx";
+import { formatPhoneNumber, validatePhoneNumber } from "@/lib/phone-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,13 +44,16 @@ export async function POST(request: NextRequest) {
         throw new Error(`Row ${index + 2}: Phone number is required`);
       }
 
-      // Clean phone number (remove spaces, dashes, etc.)
-      const cleanPhone = phone.toString().replace(/[\s\-\(\)]/g, "");
+      // Format and validate phone number
+      const phoneValidation = validatePhoneNumber(phone.toString());
+      if (!phoneValidation.isValid) {
+        throw new Error(`Row ${index + 2}: Invalid phone number "${phone}" - ${phoneValidation.error}`);
+      }
       
       return {
         id: index + 1,
         name: name.toString(),
-        phone: cleanPhone,
+        phone: phoneValidation.formatted,
         email: email.toString(),
         position: position.toString(),
         status: "pending", // pending, calling, completed, failed

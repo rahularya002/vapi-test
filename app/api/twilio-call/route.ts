@@ -6,7 +6,13 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const VAPI_WEBHOOK_URL = process.env.VAPI_WEBHOOK_URL || "https://yourdomain.com/api/vapi-webhook";
 
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+// Initialize Twilio client only when needed
+const getTwilioClient = () => {
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+    throw new Error("Twilio credentials not configured");
+  }
+  return twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,6 +51,7 @@ export async function POST(request: NextRequest) {
 
     // For now, we'll use a simpler approach with TwiML that can be extended
     // This creates a call that can be connected to Vapi via webhook
+    const client = getTwilioClient();
     const call = await client.calls.create({
       to: phoneNumber,
       from: TWILIO_PHONE_NUMBER,
@@ -90,6 +97,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const client = getTwilioClient();
     const call = await client.calls(callSid).fetch();
 
     return NextResponse.json({

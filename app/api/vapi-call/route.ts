@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { formatPhoneNumber, validatePhoneNumber } from "@/lib/phone-utils";
 
 const VAPI_API_URL = "https://api.vapi.ai/call";
 const VAPI_PRIVATE_KEY = process.env.VAPI_PRIVATE_KEY;
@@ -8,9 +9,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { phoneNumber, candidateName, assistantId } = body;
 
-    if (!VAPI_PRIVATE_KEY) {
+    if (!VAPI_PRIVATE_KEY || !process.env.VAPI_PHONE_NUMBER_ID || !process.env.VAPI_ASSISTANT_ID) {
       return NextResponse.json(
-        { error: "VAPI_PRIVATE_KEY not configured" },
+        { error: "Vapi credentials not configured. Missing VAPI_PRIVATE_KEY, VAPI_PHONE_NUMBER_ID, or VAPI_ASSISTANT_ID" },
         { status: 500 }
       );
     }
@@ -22,11 +23,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Format and validate phone number for E.164 format
+    const phoneValidation = validatePhoneNumber(phoneNumber);
+    if (!phoneValidation.isValid) {
+      return NextResponse.json(
+        { 
+          error: `Invalid phone number: ${phoneValidation.error}`,
+          formatted: phoneValidation.formatted,
+          original: phoneNumber
+        },
+        { status: 400 }
+      );
+    }
+
+    const formattedPhone = phoneValidation.formatted;
+
     // Prepare the call request
     const callRequest = {
       phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID, // Your Vapi phone number ID
       customer: {
-        number: phoneNumber,
+        number: formattedPhone,
         name: candidateName || "Candidate"
       },
       assistantId: assistantId || process.env.VAPI_ASSISTANT_ID,
