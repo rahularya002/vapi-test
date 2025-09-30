@@ -3,6 +3,7 @@ import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import * as XLSX from "xlsx";
 import { formatPhoneNumber, validatePhoneNumber } from "@/lib/phone-utils";
+import { candidatesApi } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,23 +52,31 @@ export async function POST(request: NextRequest) {
       }
       
       return {
-        id: index + 1,
         name: name.toString(),
         phone: phoneValidation.formatted,
         email: email.toString(),
         position: position.toString(),
         status: "pending", // pending, calling, completed, failed
-        callResult: null,
-        callNotes: "",
-        callTime: null
+        call_result: undefined,
+        call_notes: "",
+        call_time: undefined
       };
     });
+
+    // Save candidates to Supabase
+    try {
+      await candidatesApi.createMany(candidates);
+      console.log(`Saved ${candidates.length} candidates to Supabase`);
+    } catch (error) {
+      console.error("Error saving candidates to Supabase:", error);
+      // Continue even if Supabase save fails
+    }
 
     return NextResponse.json({
       success: true,
       candidates,
       totalCount: candidates.length,
-      message: `Successfully parsed ${candidates.length} candidates from Excel file`
+      message: `Successfully parsed and saved ${candidates.length} candidates from Excel file`
     });
 
   } catch (error) {

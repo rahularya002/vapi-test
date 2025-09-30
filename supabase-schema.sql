@@ -27,9 +27,30 @@ CREATE TABLE IF NOT EXISTS call_configs (
   script TEXT NOT NULL,
   voice_settings JSONB NOT NULL DEFAULT '{}',
   call_settings JSONB NOT NULL DEFAULT '{}',
+  assistant_settings JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Add new columns for assistant configuration
+ALTER TABLE call_configs 
+ADD COLUMN IF NOT EXISTS assistant_name VARCHAR(255) DEFAULT 'Interview Assistant',
+ADD COLUMN IF NOT EXISTS assistant_language VARCHAR(10) DEFAULT 'en',
+ADD COLUMN IF NOT EXISTS model_provider VARCHAR(50) DEFAULT 'openai',
+ADD COLUMN IF NOT EXISTS model_name VARCHAR(50) DEFAULT 'gpt-4o-mini',
+ADD COLUMN IF NOT EXISTS voice_provider VARCHAR(50) DEFAULT 'elevenlabs',
+ADD COLUMN IF NOT EXISTS voice_id VARCHAR(100) DEFAULT 'adam',
+ADD COLUMN IF NOT EXISTS voice_speed DECIMAL(3,1) DEFAULT 1.0,
+ADD COLUMN IF NOT EXISTS voice_pitch DECIMAL(3,1) DEFAULT 1.0,
+ADD COLUMN IF NOT EXISTS transcription_provider VARCHAR(50) DEFAULT 'deepgram',
+ADD COLUMN IF NOT EXISTS transcription_model VARCHAR(50) DEFAULT 'nova-2',
+ADD COLUMN IF NOT EXISTS transcription_language VARCHAR(10) DEFAULT 'multi',
+ADD COLUMN IF NOT EXISTS instructions TEXT,
+ADD COLUMN IF NOT EXISTS max_duration_seconds INTEGER DEFAULT 600,
+ADD COLUMN IF NOT EXISTS interruption_threshold INTEGER DEFAULT 1000,
+ADD COLUMN IF NOT EXISTS background_sound VARCHAR(50) DEFAULT 'office',
+ADD COLUMN IF NOT EXISTS silence_timeout_seconds INTEGER DEFAULT 5,
+ADD COLUMN IF NOT EXISTS response_delay_seconds DECIMAL(3,1) DEFAULT 0.5;
 
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);

@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
   <Pause length="3"/>
   <Say voice="alice">What is your availability for the next steps?</Say>
   <Pause length="3"/>
-  <Say voice="alice">Thank you for your time! We will be in touch soon. Goodbye.</Say>
+  <Say voice="alice">Thank you for your time! We     will be in touch soon. Goodbye.</Say>
 </Response>`;
     } else if (digits === '2') {
       // Candidate said no

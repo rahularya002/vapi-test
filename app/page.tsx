@@ -26,13 +26,13 @@ interface Candidate {
   email: string;
   position: string;
   status: string;
-  callResult?: string;
-  callNotes?: string;
-  callTime?: string;
+  call_result?: string;
+  call_notes?: string;
+  call_time?: string;
 }
 
 interface CallConfiguration {
-  method: "vapi" | "twilio" | "hybrid";
+  method: "vapi";
   script: string;
   voiceSettings: {
     provider: string;
@@ -51,13 +51,14 @@ export default function Home() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [callQueue, setCallQueue] = useState<Candidate[]>([]);
   const [callHistory, setCallHistory] = useState<Candidate[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [isCalling, setIsCalling] = useState(false);
   const [currentCall, setCurrentCall] = useState<Candidate | null>(null);
-  const [activeTab, setActiveTab] = useState("upload");
+  const [activeTab, setActiveTab] = useState<"upload" | "assistant" | "candidates" | "queue" | "history">("upload");
   const [dataLocation, setDataLocation] = useState("Loading...");
   const [callConfig, setCallConfig] = useState<CallConfiguration>({
-    method: "hybrid",
+    method: "vapi",
     script: `Hello! This is an automated call regarding your job application. Do you have a few minutes to answer some questions?
 
 1. Can you tell me about yourself and your background?
@@ -80,6 +81,233 @@ Thank you for your time!`,
     }
   });
 
+  // Assistant configuration state
+  const [assistantConfig, setAssistantConfig] = useState({
+    name: "Interview Assistant",
+    language: "en", // Default to English
+    model: {
+      provider: "openai",
+      model: "gpt-4o-mini",
+      temperature: 0.7,
+      maxTokens: 1000
+    },
+    voice: {
+      provider: "elevenlabs",
+      voiceId: "adam",
+      speed: 1.0,
+      pitch: 1.0
+    },
+    transcription: {
+      provider: "deepgram",
+      model: "nova-2",
+      language: "multi"
+    },
+    instructions: `You are a professional interview assistant conducting phone interviews for job candidates. 
+
+Your role is to:
+1. Greet the candidate professionally
+2. Ask relevant interview questions
+3. Listen actively to their responses
+4. Take notes of key information
+5. Be friendly but professional
+6. If they ask to speak to a human, explain this is an automated screening
+7. Thank them for their time at the end
+
+Always be respectful, patient, and professional.`,
+    maxDurationSeconds: 600,
+    interruptionThreshold: 1000,
+    backgroundSound: "office",
+    silenceTimeoutSeconds: 5,
+    responseDelaySeconds: 0.5
+  });
+
+  const [assistantStatus, setAssistantStatus] = useState({
+    isConfigured: false,
+    assistantId: null as string | null,
+    lastTested: null as string | null
+  });
+
+  // Assistant configuration functions
+  const testAssistantConnection = async () => {
+    try {
+      const response = await fetch("/api/test-vapi-assistant");
+      const result = await response.json();
+      
+      if (result.success) {
+        setAssistantStatus(prev => ({
+          ...prev,
+          isConfigured: result.data.assistants.hasRequiredAssistant,
+          assistantId: result.data.assistants.requiredAssistantId,
+          lastTested: new Date().toISOString()
+        }));
+        alert("Assistant connection successful!");
+      } else {
+        alert(`Connection failed: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error testing assistant connection:", error);
+      alert("Error testing assistant connection");
+    }
+  };
+
+  const createTestAssistant = async () => {
+    try {
+      const response = await fetch("/api/test-vapi-assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testAssistant: true })
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        setAssistantStatus(prev => ({
+          ...prev,
+          isConfigured: true,
+          assistantId: result.assistant.id,
+          lastTested: new Date().toISOString()
+        }));
+        alert(`Test assistant created successfully! ID: ${result.assistant.id}`);
+      } else {
+        alert(`Failed to create test assistant: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error creating test assistant:", error);
+      alert("Error creating test assistant");
+    }
+  };
+
+  const loadAssistantConfig = async () => {
+    try {
+      const response = await fetch("/api/assistant");
+      const result = await response.json();
+      
+      if (response.ok) {
+        setAssistantConfig(prev => ({
+          ...prev,
+          name: result.name || prev.name,
+          language: result.language || prev.language,
+          model: result.model || prev.model,
+          voice: result.voice || prev.voice,
+          transcription: result.transcription || prev.transcription,
+          instructions: result.instructions || prev.instructions
+        }));
+        alert("Assistant configuration loaded successfully!");
+      } else {
+        alert("Failed to load assistant configuration");
+      }
+    } catch (error) {
+      console.error("Error loading assistant config:", error);
+      alert("Error loading assistant configuration");
+    }
+  };
+
+  const loadExistingHindiAssistant = async () => {
+    try {
+      // Get your existing Hindi assistant from VAPI
+      const response = await fetch("/api/vapi-assistant");
+      const result = await response.json();
+      
+      if (result.success && result.assistants.length > 0) {
+        // Find Hindi assistant (you can customize this logic)
+        const hindiAssistant = result.assistants.find((assistant: any) => 
+          assistant.name.toLowerCase().includes('hindi') || 
+          assistant.name.toLowerCase().includes('हिंदी')
+        ) || result.assistants[0]; // Fallback to first assistant
+        
+        setAssistantStatus(prev => ({
+          ...prev,
+          isConfigured: true,
+          assistantId: hindiAssistant.id,
+          lastTested: new Date().toISOString()
+        }));
+        
+        // Load the assistant configuration from VAPI
+        const configResponse = await fetch(`/api/vapi-assistant?assistantId=${hindiAssistant.id}`);
+        if (configResponse.ok) {
+          const config = await configResponse.json();
+          setAssistantConfig(prev => ({
+            ...prev,
+            name: config.assistant.name || prev.name,
+            language: config.assistant.language || "hi",
+            model: config.assistant.model || prev.model,
+            voice: config.assistant.voice || prev.voice,
+            transcription: config.assistant.transcription || prev.transcription,
+            instructions: config.assistant.instructions || prev.instructions,
+            maxDurationSeconds: config.assistant.maxDurationSeconds || prev.maxDurationSeconds,
+            interruptionThreshold: config.assistant.interruptionThreshold || prev.interruptionThreshold,
+            backgroundSound: config.assistant.backgroundSound || prev.backgroundSound,
+            silenceTimeoutSeconds: config.assistant.silenceTimeoutSeconds || prev.silenceTimeoutSeconds,
+            responseDelaySeconds: config.assistant.responseDelaySeconds || prev.responseDelaySeconds
+          }));
+        }
+        
+        alert(`Hindi assistant loaded successfully! ID: ${hindiAssistant.id}`);
+      } else {
+        alert("No assistants found. Please create one first.");
+      }
+    } catch (error) {
+      console.error("Error loading Hindi assistant:", error);
+      alert("Error loading Hindi assistant");
+    }
+  };
+
+  const useVapiAssistantDirectly = async () => {
+    try {
+      // Get your existing Hindi assistant from VAPI
+      const response = await fetch("/api/vapi-assistant");
+      const result = await response.json();
+      
+      if (result.success && result.assistants.length > 0) {
+        // Find Hindi assistant (you can customize this logic)
+        const hindiAssistant = result.assistants.find((assistant: any) => 
+          assistant.name.toLowerCase().includes('hindi') || 
+          assistant.name.toLowerCase().includes('हिंदी')
+        ) || result.assistants[0]; // Fallback to first assistant
+        
+        setAssistantStatus(prev => ({
+          ...prev,
+          isConfigured: true,
+          assistantId: hindiAssistant.id,
+          lastTested: new Date().toISOString()
+        }));
+        
+        // Set language to Hindi for UI display
+        setAssistantConfig(prev => ({
+          ...prev,
+          language: "hi",
+          name: hindiAssistant.name || "Hindi Assistant"
+        }));
+        
+        alert(`Using VAPI assistant directly! ID: ${hindiAssistant.id}\n\nThis will use your pre-configured assistant from VAPI without modifying the database.`);
+      } else {
+        alert("No assistants found. Please create one first.");
+      }
+    } catch (error) {
+      console.error("Error loading VAPI assistant:", error);
+      alert("Error loading VAPI assistant");
+    }
+  };
+
+  const saveAssistantConfig = async () => {
+    try {
+      const response = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(assistantConfig)
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        alert("Assistant configuration saved successfully!");
+      } else {
+        alert(`Failed to save configuration: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error saving assistant config:", error);
+      alert("Error saving assistant configuration");
+    }
+  };
+
   // Load call queue and history on component mount
   useEffect(() => {
     loadCallData();
@@ -90,61 +318,27 @@ Thank you for your time!`,
 
   const loadCallData = async () => {
     try {
-      const [queueResponse, historyResponse] = await Promise.all([
+      setIsLoading(true);
+      const [queueResponse, historyResponse, candidatesResponse] = await Promise.all([
         fetch("/api/calls"),
-        fetch("/api/calls?type=history")
+        fetch("/api/calls?type=history"),
+        fetch("/api/data?action=candidates")
       ]);
       
       const queueData = await queueResponse.json();
       const historyData = await historyResponse.json();
+      const candidatesData = await candidatesResponse.json();
       
       setCallQueue(queueData.queue || []);
       setCallHistory(historyData.calls || []);
+      setCandidates(candidatesData.candidates || []);
     } catch (error) {
       console.error("Error loading call data:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const loadScriptTemplates = async () => {
-    try {
-      const response = await fetch("/api/script", { method: "PUT" });
-      const data = await response.json();
-      
-      if (data.success && data.templates) {
-        // Show templates in a simple alert for now
-        const templateNames = data.templates.map((t: any) => t.name).join(", ");
-        alert(`Available templates: ${templateNames}\n\nClick on a template name to load it.`);
-      }
-    } catch (error) {
-      console.error("Error loading templates:", error);
-    }
-  };
-
-  const saveScript = async () => {
-    try {
-      const response = await fetch("/api/script", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          script: callConfig.script,
-          voiceSettings: callConfig.voiceSettings,
-          callSettings: callConfig.callSettings,
-          method: callConfig.method
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        alert("Script saved successfully! New calls will use the updated script immediately.");
-      } else {
-        alert("Failed to save script: " + data.error);
-      }
-    } catch (error) {
-      console.error("Error saving script:", error);
-      alert("Failed to save script. Please try again.");
-    }
-  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -163,8 +357,9 @@ Thank you for your time!`,
       const result = await response.json();
       
       if (result.success) {
-        setCandidates(result.candidates);
-        alert(`Successfully parsed ${result.totalCount} candidates from Excel file`);
+        // Refresh candidates from Supabase
+        await loadCallData();
+        alert(`Successfully parsed and saved ${result.totalCount} candidates from Excel file`);
       } else {
         alert(`Error: ${result.error}`);
       }
@@ -207,6 +402,32 @@ Thank you for your time!`,
     }
   };
 
+  const addSingleCandidateToQueue = async (candidate: Candidate) => {
+    try {
+      const response = await fetch("/api/calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "add_to_queue",
+          candidates: [candidate]
+        }),
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        setCallQueue(prev => [...prev, candidate]);
+        alert(`Added ${candidate.name} to call queue`);
+        setActiveTab("queue");
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error adding candidate to queue:", error);
+      alert("Error adding candidate to queue");
+    }
+  };
+
   const startCall = async (candidate: Candidate) => {
     setIsCalling(true);
     setCurrentCall(candidate);
@@ -222,37 +443,17 @@ Thank you for your time!`,
         }),
       });
 
-      // Initiate call based on selected method
-      let callResponse;
-      if (callConfig.method === "twilio") {
-        callResponse = await fetch("/api/twilio-only-call", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phoneNumber: candidate.phone,
-            candidateName: candidate.name,
-          }),
-        });
-      } else if (callConfig.method === "hybrid") {
-        callResponse = await fetch("/api/hybrid-call", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phoneNumber: candidate.phone,
-            candidateName: candidate.name,
-          }),
-        });
-      } else {
-        // Default to Vapi
-        callResponse = await fetch("/api/vapi-call", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phoneNumber: candidate.phone,
-            candidateName: candidate.name,
-          }),
-        });
-      }
+      // Use VAPI assistant directly - no custom overrides
+      const callResponse = await fetch("/api/vapi-call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phoneNumber: candidate.phone,
+          candidateName: candidate.name,
+          assistantId: assistantStatus.assistantId
+          // No customInstructions or voiceSettings - use VAPI assistant as-is
+        }),
+      });
 
       const callResult = await callResponse.json();
       
@@ -279,8 +480,8 @@ Thank you for your time!`,
         body: JSON.stringify({
           action: "end_call",
           candidateId: candidate.id,
-          callResult: result,
-          callNotes: notes
+          call_result: result,
+          call_notes: notes
         }),
       });
 
@@ -380,6 +581,15 @@ Thank you for your time!`,
                 <span>{dataLocation}</span>
               </div>
               
+              <div className="flex items-center space-x-2 px-3 py-1 bg-gray-100 rounded-full">
+                <div className={`w-2 h-2 rounded-full ${
+                  assistantConfig.language === "hi" ? 'bg-orange-500' : 'bg-blue-500'
+                }`}></div>
+                <span className="text-sm font-medium">
+                  {assistantConfig.language === "hi" ? "हिंदी" : "English"}
+                </span>
+              </div>
+              
               <Button variant="outline" size="sm" onClick={exportData}>
                 <Download className="h-4 w-4 mr-2" />
                 Export Data
@@ -405,106 +615,36 @@ Thank you for your time!`,
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-6">
-                    <div className="space-y-2">
-                      <Label>Call Method</Label>
-                      <Select 
-                        value={callConfig.method} 
-                        onValueChange={(value: "vapi" | "twilio" | "hybrid") => 
-                          setCallConfig(prev => ({ ...prev, method: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="vapi">Vapi Only (Requires Vapi Phone Number)</SelectItem>
-                          <SelectItem value="twilio">Twilio Only (Basic Interview Flow)</SelectItem>
-                          <SelectItem value="hybrid">Twilio + Basic Flow (Recommended)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <p className="text-sm text-blue-800">
-                        <strong>📞 Call Options:</strong> 
-                        <br />• <strong>Twilio Only:</strong> Uses your Twilio phone number with basic interview flow
-                        <br />• <strong>Hybrid:</strong> Twilio calling with enhanced interview questions
-                        <br />• <strong>Vapi Only:</strong> Requires Vapi phone number (see VAPI_SETUP_GUIDE.md)
-                      </p>
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                      <div className="flex items-start space-x-3">
+                        <div className="w-2 h-2 rounded-full bg-green-500 mt-2"></div>
+                        <div>
+                          <h3 className="font-semibold text-green-900">VAPI Assistant Calls</h3>
+                          <p className="text-sm text-green-700 mt-1">
+                            All calls use your pre-configured VAPI assistant with your Twilio number imported to VAPI.
+                          </p>
+                          <p className="text-xs text-green-600 mt-2">
+                            <strong>Normal calls</strong> - No automated scripts, uses your VAPI configuration directly.
+                          </p>
+                        </div>
+                      </div>
                     </div>
                     
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label>Interview Script</Label>
-                        <div className="flex space-x-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={loadScriptTemplates}
-                          >
-                            Templates
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={saveScript}
-                          >
-                            Save
-                          </Button>
+                    <div className="p-4 border border-green-200 bg-green-50 rounded-lg">
+                      <div className="flex items-start space-x-3">
+                        <div className="w-2 h-2 rounded-full bg-green-500 mt-2"></div>
+                        <div>
+                          <h3 className="font-semibold text-green-900">Using VAPI Assistant</h3>
+                          <p className="text-sm text-green-700 mt-1">
+                            Your calls will use your pre-configured VAPI assistant. No local script needed.
+                          </p>
+                          <p className="text-xs text-green-600 mt-2">
+                            Configure your assistant in the <strong>Assistant tab</strong> or use your existing VAPI configuration.
+                          </p>
                         </div>
                       </div>
-                      <Textarea
-                        value={callConfig.script}
-                        onChange={(e) => setCallConfig(prev => ({ ...prev, script: e.target.value }))}
-                        rows={8}
-                        placeholder="Enter your interview script..."
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        💡 Script is cached for 5 minutes. Changes apply immediately to new calls.
-                      </p>
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Voice Speed</Label>
-                        <Slider
-                          value={[callConfig.voiceSettings.speed]}
-                        onValueChange={([value]: number[]) => 
-                          setCallConfig(prev => ({ 
-                            ...prev, 
-                            voiceSettings: { ...prev.voiceSettings, speed: value }
-                          }))
-                        }
-                          min={0.5}
-                          max={2.0}
-                          step={0.1}
-                        />
-                        <div className="text-sm text-muted-foreground text-center">
-                          {callConfig.voiceSettings.speed}x
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>Max Call Duration (minutes)</Label>
-                        <Slider
-                          value={[callConfig.callSettings.maxDuration]}
-                        onValueChange={([value]: number[]) => 
-                          setCallConfig(prev => ({ 
-                            ...prev, 
-                            callSettings: { ...prev.callSettings, maxDuration: value }
-                          }))
-                        }
-                          min={5}
-                          max={30}
-                          step={1}
-                        />
-                        <div className="text-sm text-muted-foreground text-center">
-                          {callConfig.callSettings.maxDuration} min
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </DialogContent>
               </Dialog>
@@ -515,11 +655,15 @@ Thank you for your time!`,
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "upload" | "assistant" | "candidates" | "queue" | "history")} className="space-y-6">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="upload" className="flex items-center space-x-2">
               <Upload className="h-4 w-4" />
               <span>Upload</span>
+            </TabsTrigger>
+            <TabsTrigger value="assistant" className="flex items-center space-x-2">
+              <Settings className="h-4 w-4" />
+              <span>Assistant</span>
             </TabsTrigger>
             <TabsTrigger value="candidates" className="flex items-center space-x-2">
               <Users className="h-4 w-4" />
@@ -546,16 +690,6 @@ Thank you for your time!`,
                 <CardDescription>
                   Upload an Excel file with candidate information to get started
                 </CardDescription>
-                <div className="mt-2">
-                  <a 
-                    href="/sample-candidates.xlsx" 
-                    download="sample-candidates.xlsx"
-                    className="text-sm text-blue-600 hover:text-blue-800 underline flex items-center space-x-1"
-                  >
-                    <Download className="h-4 w-4" />
-                    <span>Download Sample Excel Template</span>
-                  </a>
-                </div>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
@@ -566,7 +700,7 @@ Thank you for your time!`,
                     accept=".xlsx,.xls"
                     onChange={handleFileUpload}
                     disabled={isUploading}
-                    className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+                    className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 h-14"
                   />
                   {isUploading && (
                     <div className="space-y-2">
@@ -576,21 +710,15 @@ Thank you for your time!`,
                   )}
                 </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-blue-900 mb-2">📋 Expected Excel Format</h4>
-                  <div className="text-sm text-blue-800 space-y-1">
-                    <p><strong>Required Columns:</strong></p>
-                    <ul className="list-disc list-inside ml-4 space-y-1">
-                      <li><strong>Phone</strong> - Candidate's phone number (required)</li>
-                      <li><strong>Name</strong> - Full name (optional, defaults to "Candidate 1", "Candidate 2", etc.)</li>
-                      <li><strong>Email</strong> - Email address (optional)</li>
-                      <li><strong>Position</strong> - Job title/position (optional)</li>
-                    </ul>
-                    <p className="mt-2"><strong>Supported column names:</strong> phone/Phone/PHONE/phoneNumber, name/Name/NAME/candidateName, email/Email/EMAIL/emailAddress, position/Position/POSITION/jobTitle</p>
-                  </div>
-                </div>
 
-                {candidates.length > 0 && (
+                {isLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="flex items-center space-x-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                      <span className="text-sm text-muted-foreground">Loading candidates...</span>
+                    </div>
+                  </div>
+                ) : candidates.length > 0 ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h3 className="text-lg font-semibold">Parsed Candidates ({candidates.length})</h3>
@@ -628,53 +756,14 @@ Thank you for your time!`,
                       )}
                     </div>
                   </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No candidates uploaded yet</p>
+                    <p className="text-sm">Upload an Excel file to get started</p>
+                  </div>
                 )}
 
-                <Alert>
-                  <FileText className="h-4 w-4" />
-                  <AlertDescription>
-                    <strong>Excel File Format:</strong> Your file should contain columns: <code>name</code>, <code>phone</code>, <code>email</code>, <code>position</code>. 
-                    The phone column is required, others are optional.
-                  </AlertDescription>
-                </Alert>
-
-                <Card className="bg-blue-50 border-blue-200">
-                  <CardContent className="pt-6">
-                    <div className="flex items-start space-x-3">
-                      <Database className="h-5 w-5 text-blue-600 mt-0.5" />
-                      <div>
-                        <h4 className="font-semibold text-blue-900 mb-2">Performance & Storage Information</h4>
-                        <p className="text-sm text-blue-800 mb-2">
-                          <strong>Where your data is saved:</strong> {dataLocation.includes("Supabase") 
-                            ? "All candidate data, call queue, and call history are automatically saved to your Supabase database in the cloud."
-                            : "All candidate data is temporarily stored in local memory. Set up Supabase for persistent cloud storage."
-                          }
-                        </p>
-                        <p className="text-sm text-blue-800 mb-2">
-                          <strong>Performance Optimizations:</strong>
-                        </p>
-                        <ul className="text-sm text-blue-800 list-disc list-inside space-y-1">
-                          <li><strong>Script Caching:</strong> Scripts are cached in memory for 5 minutes (no DB queries during calls)</li>
-                          <li><strong>Fast Calls:</strong> Call initiation takes ~100ms instead of 200-500ms</li>
-                          <li><strong>Auto-Refresh:</strong> Script updates are applied immediately to new calls</li>
-                          <li><strong>Fallback System:</strong> Default scripts if database is unavailable</li>
-                        </ul>
-                        <p className="text-sm text-blue-800 mb-2">
-                          <strong>Database tables:</strong>
-                        </p>
-                        <ul className="text-sm text-blue-800 list-disc list-inside space-y-1">
-                          <li><code>candidates</code> - All uploaded candidate data with status tracking</li>
-                          <li><code>call_configs</code> - Your call configuration settings</li>
-                          <li>Real-time updates and automatic backups</li>
-                          <li>Row-level security for data protection</li>
-                        </ul>
-                        <p className="text-sm text-blue-800 mt-2">
-                          <strong>Benefits:</strong> Cloud storage, real-time sync, automatic backups, and scalable infrastructure.
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
               </CardContent>
             </Card>
           </TabsContent>
@@ -890,14 +979,14 @@ Thank you for your time!`,
                             <TableCell>{candidate.position}</TableCell>
                             <TableCell>
                               <Badge variant="outline">
-                                {candidate.callResult || "N/A"}
+                                {candidate.call_result || "N/A"}
                               </Badge>
                             </TableCell>
                             <TableCell className="max-w-xs truncate">
-                              {candidate.callNotes || "N/A"}
+                              {candidate.call_notes || "N/A"}
                             </TableCell>
                             <TableCell>
-                              {candidate.callTime ? new Date(candidate.callTime).toLocaleString() : "N/A"}
+                              {candidate.call_time ? new Date(candidate.call_time).toLocaleString() : "N/A"}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -905,6 +994,442 @@ Thank you for your time!`,
                     </Table>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+
+          {/* Assistant Tab */}
+          <TabsContent value="assistant" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Settings className="h-5 w-5" />
+                  <span>VAPI Assistant Configuration</span>
+                  {assistantStatus.isConfigured && (
+                    <Badge variant="default" className="ml-2">
+                      Active
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Configure your VAPI assistant for intelligent call handling with support for multiple languages
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Quick Start Message */}
+                <div className="p-4 border border-blue-200 bg-blue-50 rounded-lg">
+                  <div className="flex items-start space-x-3">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 mt-2"></div>
+                    <div>
+                      <h3 className="font-semibold text-blue-900">Quick Start with VAPI Assistant</h3>
+                      <p className="text-sm text-blue-700 mt-1">
+                        Since you already have a Hindi assistant configured in VAPI, you can use it directly without recreating the configuration here.
+                      </p>
+                      <p className="text-xs text-blue-600 mt-2">
+                        <strong>Direct Mode:</strong> Your VAPI assistant's script, voice, and settings will be used exactly as configured in VAPI. No local overrides.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Assistant Status */}
+                <div className={`p-6 border-2 rounded-lg transition-all duration-200 ${
+                  assistantStatus.isConfigured 
+                    ? 'border-green-200 bg-green-50' 
+                    : 'border-orange-200 bg-orange-50'
+                }`}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-3">
+                      <div className={`w-3 h-3 rounded-full mt-1 ${
+                        assistantStatus.isConfigured ? 'bg-green-500' : 'bg-orange-500'
+                      }`}></div>
+                      <div>
+                        <h3 className="font-semibold text-lg">
+                          {assistantStatus.isConfigured ? 'Assistant Active' : 'Assistant Not Configured'}
+                        </h3>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {assistantStatus.isConfigured 
+                            ? `Using VAPI Assistant ID: ${assistantStatus.assistantId} (Direct Mode)` 
+                            : "Create or load an assistant to get started with intelligent calling"
+                          }
+                        </p>
+                        {assistantStatus.lastTested && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Last tested: {new Date(assistantStatus.lastTested).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-col space-y-2">
+                    <div className="flex space-x-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={testAssistantConnection}
+                        className="flex items-center space-x-1"
+                      >
+                        <Database className="h-3 w-3" />
+                        <span>Test</span>
+                      </Button>
+                      <Button 
+                        variant="default"
+                        size="sm"
+                        onClick={useVapiAssistantDirectly}
+                        className="flex items-center space-x-1"
+                      >
+                        <Phone className="h-3 w-3" />
+                        <span>Use VAPI Assistant</span>
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        size="sm"
+                        onClick={loadExistingHindiAssistant}
+                        className="flex items-center space-x-1"
+                      >
+                        <Users className="h-3 w-3" />
+                        <span>Load Config</span>
+                      </Button>
+                      <Button 
+                        size="sm"
+                        onClick={createTestAssistant}
+                        className="flex items-center space-x-1"
+                      >
+                        <Settings className="h-3 w-3" />
+                        <span>Create New</span>
+                      </Button>
+                    </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Assistant Configuration Form */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Basic Settings */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">Basic Settings</h3>
+                    
+                    <div>
+                      <Label htmlFor="assistant-name">Assistant Name</Label>
+                      <Input
+                        id="assistant-name"
+                        value={assistantConfig.name}
+                        onChange={(e) => setAssistantConfig(prev => ({
+                          ...prev,
+                          name: e.target.value
+                        }))}
+                        placeholder="Interview Assistant"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="assistant-language" className="text-base font-medium">Language</Label>
+                      <div className="p-4 border rounded-lg bg-blue-50">
+                        <Select
+                          value={assistantConfig.language}
+                          onValueChange={(value) => {
+                            setAssistantConfig(prev => {
+                              const newConfig = { ...prev, language: value };
+                              
+                              // Update voice and transcription settings based on language
+                              if (value === "hi") {
+                                newConfig.voice = {
+                                  ...prev.voice,
+                                  voiceId: "hindi-male-1" // Hindi voice
+                                };
+                                newConfig.transcription = {
+                                  ...prev.transcription,
+                                  language: "hi"
+                                };
+                                newConfig.instructions = `आप एक पेशेवर साक्षात्कार सहायक हैं जो नौकरी के उम्मीदवारों के लिए फोन साक्षात्कार आयोजित करते हैं।
+
+आपकी भूमिका है:
+1. उम्मीदवार का पेशेवर तरीके से स्वागत करना
+2. प्रासंगिक साक्षात्कार प्रश्न पूछना
+3. उनकी प्रतिक्रियाओं को सक्रिय रूप से सुनना
+4. महत्वपूर्ण जानकारी का नोट लेना
+5. मित्रवत लेकिन पेशेवर रहना
+6. यदि वे मानव से बात करना चाहते हैं, तो समझाएं कि यह एक स्वचालित स्क्रीनिंग है
+7. अंत में उनके समय के लिए धन्यवाद देना
+
+हमेशा सम्मानजनक, धैर्यवान और पेशेवर रहें।`;
+                              } else {
+                                newConfig.voice = {
+                                  ...prev.voice,
+                                  voiceId: "adam" // English voice
+                                };
+                                newConfig.transcription = {
+                                  ...prev.transcription,
+                                  language: "multi"
+                                };
+                                newConfig.instructions = `You are a professional interview assistant conducting phone interviews for job candidates. 
+
+Your role is to:
+1. Greet the candidate professionally
+2. Ask relevant interview questions
+3. Listen actively to their responses
+4. Take notes of key information
+5. Be friendly but professional
+6. If they ask to speak to a human, explain this is an automated screening
+7. Thank them for their time at the end
+
+Always be respectful, patient, and professional.`;
+                              }
+                              
+                              return newConfig;
+                            });
+                          }}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="en">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-lg">🇺🇸</span>
+                                <span>English</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="hi">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-lg">🇮🇳</span>
+                                <span>Hindi (हिंदी)</span>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {assistantConfig.language === "hi" 
+                            ? "Hindi voice and transcription will be automatically configured"
+                            : "Multi-language voice and transcription will be used"
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="model-provider">Model Provider</Label>
+                      <Select
+                        value={assistantConfig.model.provider}
+                        onValueChange={(value) => setAssistantConfig(prev => ({
+                          ...prev,
+                          model: { ...prev.model, provider: value }
+                        }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="openai">OpenAI</SelectItem>
+                          <SelectItem value="anthropic">Anthropic</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="model-name">Model</Label>
+                      <Select
+                        value={assistantConfig.model.model}
+                        onValueChange={(value) => setAssistantConfig(prev => ({
+                          ...prev,
+                          model: { ...prev.model, model: value }
+                        }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
+                          <SelectItem value="gpt-4o">GPT-4o</SelectItem>
+                          <SelectItem value="claude-3-haiku">Claude 3 Haiku</SelectItem>
+                          <SelectItem value="claude-3-sonnet">Claude 3 Sonnet</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Voice Settings */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">Voice Settings</h3>
+                    
+                    <div className="p-4 border rounded-lg bg-gray-50">
+                      <div className="flex items-center space-x-2 mb-3">
+                        <div className={`w-2 h-2 rounded-full ${
+                          assistantConfig.language === "hi" ? 'bg-orange-500' : 'bg-blue-500'
+                        }`}></div>
+                        <span className="text-sm font-medium">
+                          {assistantConfig.language === "hi" ? "Hindi Voice Configuration" : "English Voice Configuration"}
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <Label htmlFor="voice-provider">Voice Provider</Label>
+                          <Select
+                            value={assistantConfig.voice.provider}
+                            onValueChange={(value) => setAssistantConfig(prev => ({
+                              ...prev,
+                              voice: { ...prev.voice, provider: value }
+                            }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="elevenlabs">ElevenLabs</SelectItem>
+                              <SelectItem value="openai">OpenAI</SelectItem>
+                              <SelectItem value="azure">Azure</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="voice-id">Voice ID</Label>
+                          <Input
+                            id="voice-id"
+                            value={assistantConfig.voice.voiceId}
+                            onChange={(e) => setAssistantConfig(prev => ({
+                              ...prev,
+                              voice: { ...prev.voice, voiceId: e.target.value }
+                            }))}
+                            placeholder={assistantConfig.language === "hi" ? "hindi-male-1" : "adam"}
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {assistantConfig.language === "hi" 
+                              ? "Recommended: hindi-male-1, hindi-female-1, or your custom Hindi voice"
+                              : "Recommended: adam, sarah, or your custom English voice"
+                            }
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label>Voice Speed: {assistantConfig.voice.speed}</Label>
+                      <Slider
+                        value={[assistantConfig.voice.speed]}
+                        onValueChange={([value]) => setAssistantConfig(prev => ({
+                          ...prev,
+                          voice: { ...prev.voice, speed: value }
+                        }))}
+                        min={0.5}
+                        max={2.0}
+                        step={0.1}
+                        className="mt-2"
+                      />
+                    </div>
+
+                    <div>
+                      <Label>Voice Pitch: {assistantConfig.voice.pitch}</Label>
+                      <Slider
+                        value={[assistantConfig.voice.pitch]}
+                        onValueChange={([value]) => setAssistantConfig(prev => ({
+                          ...prev,
+                          voice: { ...prev.voice, pitch: value }
+                        }))}
+                        min={0.5}
+                        max={2.0}
+                        step={0.1}
+                        className="mt-2"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Instructions */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="instructions" className="text-base font-medium">Assistant Instructions</Label>
+                    <Badge variant="outline" className="text-xs">
+                      {assistantConfig.language === "hi" ? "Hindi Mode" : "English Mode"}
+                    </Badge>
+                  </div>
+                  <div className="p-4 border rounded-lg bg-gray-50">
+                    <Textarea
+                      id="instructions"
+                      value={assistantConfig.instructions}
+                      onChange={(e) => setAssistantConfig(prev => ({
+                        ...prev,
+                        instructions: e.target.value
+                      }))}
+                      placeholder={assistantConfig.language === "hi" 
+                        ? "आपके सहायक के लिए विस्तृत निर्देश दर्ज करें..."
+                        : "Enter detailed instructions for your assistant..."
+                      }
+                      className="min-h-[200px] bg-white"
+                    />
+                    <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>
+                        {assistantConfig.language === "hi" 
+                          ? "Hindi instructions will be used for all calls"
+                          : "English instructions will be used for all calls"
+                        }
+                      </span>
+                      <span>{assistantConfig.instructions.length} characters</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Advanced Settings */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <Label htmlFor="max-duration">Max Duration (seconds)</Label>
+                    <Input
+                      id="max-duration"
+                      type="number"
+                      value={assistantConfig.maxDurationSeconds}
+                      onChange={(e) => setAssistantConfig(prev => ({
+                        ...prev,
+                        maxDurationSeconds: parseInt(e.target.value) || 600
+                      }))}
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="silence-timeout">Silence Timeout (seconds)</Label>
+                    <Input
+                      id="silence-timeout"
+                      type="number"
+                      value={assistantConfig.silenceTimeoutSeconds}
+                      onChange={(e) => setAssistantConfig(prev => ({
+                        ...prev,
+                        silenceTimeoutSeconds: parseInt(e.target.value) || 5
+                      }))}
+                    />
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center justify-between p-4 border-t bg-gray-50 rounded-lg">
+                  <div className="flex items-center space-x-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      assistantStatus.isConfigured ? 'bg-green-500' : 'bg-orange-500'
+                    }`}></div>
+                    <span className="text-sm text-muted-foreground">
+                      {assistantStatus.isConfigured 
+                        ? "Assistant is ready for calls"
+                        : "Configure assistant to enable calling"
+                      }
+                    </span>
+                  </div>
+                  <div className="flex space-x-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={loadAssistantConfig}
+                      className="flex items-center space-x-1"
+                    >
+                      <FileText className="h-3 w-3" />
+                      <span>Load Config</span>
+                    </Button>
+                    <Button 
+                      onClick={saveAssistantConfig}
+                      className="flex items-center space-x-1"
+                    >
+                      <Save className="h-3 w-3" />
+                      <span>Save Config</span>
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

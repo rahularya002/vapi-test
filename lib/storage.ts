@@ -47,6 +47,25 @@ export interface CallConfig {
     retryAttempts: number;
     delayBetweenCalls: number;
   };
+  // Assistant configuration fields
+  assistant_name?: string;
+  assistant_language?: string;
+  model_provider?: string;
+  model_name?: string;
+  voice_provider?: string;
+  voice_id?: string;
+  voice_speed?: number;
+  voice_pitch?: number;
+  transcription_provider?: string;
+  transcription_model?: string;
+  transcription_language?: string;
+  instructions?: string;
+  max_duration_seconds?: number;
+  interruption_threshold?: number;
+  background_sound?: string;
+  silence_timeout_seconds?: number;
+  response_delay_seconds?: number;
+  assistant_settings?: any;
 }
 
 // Generic file operations

@@ -38,22 +38,24 @@ export async function POST(request: NextRequest) {
 
     const formattedPhone = phoneValidation.formatted;
 
-    // Prepare the call request
+    // Prepare the call request - use VAPI assistant directly
     const callRequest = {
-      phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID, // Your Vapi phone number ID
+      phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID,
       customer: {
         number: formattedPhone,
         name: candidateName || "Candidate"
       },
       assistantId: assistantId || process.env.VAPI_ASSISTANT_ID,
-      // Optional: Add custom data for the call
-      customerId: `candidate_${Date.now()}`,
+      // Remove customerId - VAPI will create customer automatically
       metadata: {
         candidateName,
         callType: "interview",
         timestamp: new Date().toISOString()
       }
     };
+
+    console.log("Using VAPI assistant directly with ID:", assistantId || process.env.VAPI_ASSISTANT_ID);
+    console.log("VAPI will use the assistant's pre-configured script, voice, and all settings");
 
     // Make the call via Vapi API
     const response = await fetch(VAPI_API_URL, {
